@@ -1,0 +1,74 @@
+{
+  "id": "dossier",
+  "name": "深研档案馆",
+  "nameEn": "Dossier",
+  "version": "1.1.0",
+  "apiVersion": 1,
+  "description": "丢进一个你还没有答案的问题,本机 Tangu 多轮检索后在你自己的笔记库里落成一份 .dossier.md 档案:每条断言都配引注、每条引注 URL 都真的被机器请求过(curl + 互联网档案馆,四级判据 可达 / 已失效 / 疑似虚构链接 / 未判定),同一课题可续研并与上一版逐条 diff。档案是纯 Markdown,存在插件工作文件夹里,可直接当笔记打开、被全库搜索与双链引用;派生的课题索引 .dossier-index.json 随时可从档案重算。数据流向:全部档案与历史快照存在本地笔记库,检索与链接探测经由你已登录的 Forsion 引擎发起,不经任何第三方服务;插件不做证据真伪判断,语义层只说「已找到支持证据 / 未找到支持证据」。",
+  "descriptionEn": "Drop in a question you have no answer to. Your local Tangu agent researches it across several rounds and writes a .dossier.md file into your own vault: every claim carries a citation, and every cited URL is actually requested by machine (curl + the Internet Archive, four verdicts: Live / Dead / Likely fabricated / Unknown). Re-run the same topic later and get a claim-by-claim diff against the previous version. Dossiers are plain Markdown in the plugin work folder — searchable and linkable like any note; the derived topic index is rebuildable from the files at any time. Data flow: dossiers and history snapshots stay in your local vault, research and link probing go through the Forsion engine you are signed in to, and nothing touches a third-party service. The plugin never judges whether evidence is true — the semantic layer only says supported or not found.",
+  "main": "main.js",
+  "fileExtensions": [".dossier.md"],
+  "events": [
+    { "name": "research_done", "label": "深研完成" },
+    { "name": "cites_checked", "label": "引注体检完成" }
+  ],
+  "onboarding": {
+    "intro": "深研档案馆 = 一个还没有答案的问题 → 一份带机器验过引注的档案。它不替你判断证据真假,只保证「这条断言有引注」「这条引注的地址真的还在」,以及「这一轮比上一版多了什么」。",
+    "steps": [
+      {
+        "title": "开一个课题",
+        "description": "命令面板「深研档案馆:打开」进课题台(或切到「档案馆」Space),在输入框写下你还没有答案的问题,点「开研」。检索台会实时显示步骤条与模型输出;关掉视图它照跑。"
+      },
+      {
+        "title": "档案长什么样",
+        "description": "产物是 <工作文件夹>/<课题>.dossier.md:结论摘要 / 断言(每条带引注编号与支持度)/ 证据源(标题、URL、原文引文、体检判据)/ 未决问题 / 检索记录。点文件树里的档案就用插件自己的阅读视图打开,右上角 `</>` 可切到源码直接改。"
+      },
+      {
+        "title": "引注体检",
+        "description": "落盘后默认自动跑一次体检:每条 URL 由 Agent 用 curl 真的请求一遍,再查互联网档案馆,四级判据 可达 / 已失效 / 疑似虚构链接 / 未判定。判定只出自插件的纯函数,模型说了不算;证据不足一律「未判定」,绝不误判编造。"
+      },
+      {
+        "title": "续研与 diff",
+        "description": "课题列表每行的「续研」再跑一轮:旧断言编号保持不变,新断言拿新号,旧版本整份存进 .history/。跑完检索台顶部给出「自上次以来」:新增 / 变化 / 移除的断言与新增证据源。这一轮没带来新内容就不产生新版本。"
+      },
+      {
+        "title": "顺手体检一篇笔记",
+        "description": "命令「深研档案馆:体检当前笔记的链接」把当前笔记里的所有 URL 抽出来跑同一套体检,结果显示在检索台,可「另存报告」到 <工作文件夹>/体检/。它只出并排报告,绝不改写你正在编辑的笔记。"
+      },
+      {
+        "title": "数据在哪",
+        "description": "档案 <工作文件夹>/<课题>.dossier.md(纯 Markdown)、历史快照 .history/<课题>/v0001.dossier.md、课题索引 .dossier-index.json(纯派生,损坏会先备份成 .bak 再重置,档案文件不受影响)。「移出列表」只动索引,不删文件。"
+      }
+    ],
+    "en": {
+      "intro": "Dossier turns a question you have no answer to into a cited research file. It never rules on whether evidence is true — it guarantees that every claim carries a citation, that every cited URL was actually requested by machine, and that you can see what this round added over the last one.",
+      "steps": [
+        {
+          "title": "Start a topic",
+          "description": "Run \"Dossier: Open\" from the command palette (or switch to the Dossier Space), type the question you have no answer to, and hit Research. The research desk shows a step bar and the live model output; the run keeps going even if you close the view."
+        },
+        {
+          "title": "What a dossier looks like",
+          "description": "The output is <work folder>/<topic>.dossier.md: Summary, Claims (each with citation ids and a support flag), Sources (title, URL, verbatim quote, verdict), Open questions and a Research log. Clicking the file in the tree opens the plugin's reading view; the `</>` button in the corner flips to raw source you can edit."
+        },
+        {
+          "title": "Citation check",
+          "description": "After saving, a check runs by default: the agent curls every URL for real and asks the Internet Archive, producing one of four verdicts — Live / Dead / Likely fabricated / Unknown. The verdict comes from a pure function inside the plugin, never from the model, and anything short of solid evidence stays Unknown."
+        },
+        {
+          "title": "Continue and diff",
+          "description": "Continue on any topic row runs another round: existing claim ids stay put, new claims get new ids, and the whole previous version is snapshotted into .history/. When it finishes, the desk shows what changed since last time — claims added, changed, removed, and new sources. A round that adds nothing produces no new version."
+        },
+        {
+          "title": "Check the links in one note",
+          "description": "\"Dossier: Verify links in this note\" pulls every URL out of the open note and runs the same check, showing the results on the research desk with a Save report button (into <work folder>/体检/). It only produces a side-by-side report — it never rewrites the note you are editing."
+        },
+        {
+          "title": "Where the data lives",
+          "description": "Dossiers at <work folder>/<topic>.dossier.md (plain Markdown), history snapshots at .history/<topic>/v0001.dossier.md, and a derived topic index .dossier-index.json (if it is corrupt it is backed up as .bak and reset — the dossier files are never touched). Remove from list only edits the index; it deletes nothing."
+        }
+      ]
+    },
+    "settings": true
+  }
+}

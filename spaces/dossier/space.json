@@ -1,0 +1,12 @@
+{
+  "id": "dossier",
+  "name": { "zh": "档案馆", "en": "Dossier" },
+  "icon": "briefcase",
+  "version": "1.0.0",
+  "layout": {
+    "left": [{ "type": "plugin:dossier:desk" }],
+    "main": [{ "type": "plugin:dossier:run" }],
+    "right": [{ "type": "chat" }]
+  },
+  "requires": { "views": ["plugin:dossier:desk", "plugin:dossier:run"] }
+}
