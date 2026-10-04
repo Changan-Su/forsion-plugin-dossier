@@ -2,7 +2,7 @@
   "id": "dossier",
   "name": "深研档案馆",
   "nameEn": "Dossier",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "apiVersion": 1,
   "description": "丢进一个你还没有答案的问题,本机 Tangu 多轮检索后在你自己的笔记库里落成一份 .dossier.md 档案:每条断言都配引注、每条引注 URL 都真的被机器请求过(curl + 互联网档案馆,四级判据 可达 / 已失效 / 疑似虚构链接 / 未判定),同一课题可续研并与上一版逐条 diff。档案是纯 Markdown,存在插件工作文件夹里,可直接当笔记打开、被全库搜索与双链引用;派生的课题索引 .dossier-index.json 随时可从档案重算。数据流向:全部档案与历史快照存在本地笔记库,检索与链接探测经由你已登录的 Forsion 引擎发起,不经任何第三方服务;插件不做证据真伪判断,语义层只说「已找到支持证据 / 未找到支持证据」。",
   "descriptionEn": "Drop in a question you have no answer to. Your local Tangu agent researches it across several rounds and writes a .dossier.md file into your own vault: every claim carries a citation, and every cited URL is actually requested by machine (curl + the Internet Archive, four verdicts: Live / Dead / Likely fabricated / Unknown). Re-run the same topic later and get a claim-by-claim diff against the previous version. Dossiers are plain Markdown in the plugin work folder — searchable and linkable like any note; the derived topic index is rebuildable from the files at any time. Data flow: dossiers and history snapshots stay in your local vault, research and link probing go through the Forsion engine you are signed in to, and nothing touches a third-party service. The plugin never judges whether evidence is true — the semantic layer only says supported or not found.",

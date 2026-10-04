@@ -1312,7 +1312,7 @@ A.ok(/new Date\(Date\.now\(\)\)/.test(src), '「现在」一律 Date.now() 推�
   const mf = JSON.parse(readFileSync(new URL('./manifest.json', import.meta.url), 'utf8'))
   A.equal(mf.id, 'dossier')
   A.equal(mf.apiVersion, 1)
-  A.equal(mf.version, '1.1.0')
+  A.equal(mf.version, '1.1.1')
   A.ok(mf.nameEn && mf.descriptionEn, 'manifest 需带 nameEn / descriptionEn')
   A.deepEqual(mf.fileExtensions, ['.dossier.md'], 'fileExtensions 必须与 registerFileType 逐字一致')
   A.deepEqual(mf.events.map((e) => e.name).sort(), ['cites_checked', 'research_done'], 'manifest events 按 SPEC')
