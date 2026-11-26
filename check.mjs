@@ -1312,7 +1312,7 @@ A.ok(/new Date\(Date\.now\(\)\)/.test(src), '「现在」一律 Date.now() 推�
   const mf = JSON.parse(readFileSync(new URL('./manifest.json', import.meta.url), 'utf8'))
   A.equal(mf.id, 'dossier')
   A.equal(mf.apiVersion, 1)
-  A.equal(mf.version, '1.1.1')
+  A.equal(mf.version, '1.2.0')
   A.ok(mf.nameEn && mf.descriptionEn, 'manifest 需带 nameEn / descriptionEn')
   A.deepEqual(mf.fileExtensions, ['.dossier.md'], 'fileExtensions 必须与 registerFileType 逐字一致')
   A.deepEqual(mf.events.map((e) => e.name).sort(), ['cites_checked', 'research_done'], 'manifest events 按 SPEC')
@@ -1386,6 +1386,90 @@ A.deepEqual(unhandled.map((e) => String((e && e.message) || e)), [], '任何路�
   A.equal(typeof off, 'function', 'subscribe() 须返回退订函数')
   off()
   if (before === undefined) vault.delete(idxKey); else vault.set(idxKey, before)
+}
+
+// ══ 插件数据文件夹(ctx.storage,1.2.0):历史快照与原始输出搬出库,旧 .history/ 只复制不删 ══
+{
+  function mkStorage(vmap, o) {
+    const opt = o || {}
+    const files = new Map()
+    const imports = []
+    const done = new Set()
+    const layer = {
+      files, imports,
+      readText: async (p) => (files.has(p) ? files.get(p) : null),
+      write: async (p, d) => { files.set(p, String(d)) },
+      importFromVault: async ({ id, from, to }) => {
+        imports.push({ id, from, to })
+        if (opt.rejectImport) throw new Error('Unrecognised import record')
+        if (done.has(id)) return { status: 'already-done', copied: 0, skipped: [] }
+        const src = [...vmap.keys()].filter((k) => k.startsWith(from + '/'))
+        if (!src.length) return { status: 'missing', copied: 0, skipped: [] }
+        done.add(id)
+        for (const k of src) files.set([to, k.slice(from.length + 1)].filter(Boolean).join('/'), vmap.get(k))
+        return { status: 'complete', copied: src.length, skipped: [] }
+      },
+    }
+    return { layer, storage: { vault: () => (opt.vaultNull ? null : layer) } }
+  }
+  async function bootStored(o) {
+    const vmap = new Map(Object.entries(o.vaultFiles || {}))
+    const vw = []
+    const ns = []
+    const st = mkStorage(vmap, o.storage)
+    const c = {
+      ...ctxMock, notify: (m, x) => ns.push([m, (x && x.level) || 'info']), storage: st.storage,
+      registerView: () => {}, registerCommand: () => {}, registerSetting: () => {}, registerFileType: () => true,
+      registerFileCreator: () => {}, registerSlashItem: () => {}, registerListSource: () => {},
+      registerStatusItem: () => ({ update() {}, dispose() {} }),
+      achievements: { registerSeries() {}, track() {} }, activity: { log() {} },
+      app: { ...ctxMock.app, readFile: async (p) => (vmap.has(p) ? vmap.get(p) : null), writeFile: async (p, text) => { vmap.set(p, text); vw.push(p) } },
+    }
+    globalThis.__DOSSIER_TEST__ = {}
+    const d = new Function('ctx', src)(c)
+    const T2 = globalThis.__DOSSIER_TEST__
+    await tick()
+    return { T2, d, vmap, vw, ns, st }
+  }
+  const OLD = '深研档案馆/.history/旧课题/v0001.dossier.md'
+  // ① 启动时复制旧 .history/,库里原件留着;新快照与原始输出写进插件数据,不再写库里的 .history/
+  const e = await bootStored({ vaultFiles: { [OLD]: '旧版全文' } })
+  A.deepEqual(e.st.layer.imports[0], { id: 'dossier-history-v1', from: '深研档案馆/.history', to: 'history' }, '启动即复制,id 固定')
+  A.equal(e.st.layer.files.get('history/旧课题/v0001.dossier.md'), '旧版全文')
+  A.ok(e.vmap.has(OLD), '库里原件不许删')
+  const m = e.T2.newModel('插件数据快照测试?', 'zh')
+  await e.T2.persistModel(m, { bump: true, snapshotText: '' })
+  await e.T2.persistModel(m, { bump: true, snapshotText: 'v1 全文' })
+  A.equal(e.st.layer.files.get(`history/${m.fm.slug}/v0001.dossier.md`), 'v1 全文', '快照进插件数据 history/')
+  A.ok(!e.vw.some((p) => p.includes('/.history/')), `库里不再写 .history/,实写 ${e.vw.join(',')}`)
+  A.ok(e.vw.some((p) => p.endsWith('.dossier.md')) && e.vw.includes('深研档案馆/.dossier-index.json'), '档案与小索引照旧在库里')
+  // 复制时保留下来的同名不同内容快照不许被新快照盖掉
+  e.st.layer.files.set(`history/${m.fm.slug}/v0002.dossier.md`, '复制来的另一版')
+  await e.T2.persistModel(m, { bump: true, snapshotText: 'v2 全文' })
+  A.equal(e.st.layer.files.get(`history/${m.fm.slug}/v0002.dossier.md`), '复制来的另一版', '已有的那份原样留着')
+  A.ok([...e.st.layer.files.entries()].some(([k, v]) => k.startsWith(`history/${m.fm.slug}/v0002-`) && v === 'v2 全文'), '新快照另起名字存下')
+  const shown = await e.T2.writeHistory('x/failed-1.txt', 'raw')
+  A.equal(e.st.layer.files.get('history/x/failed-1.txt'), 'raw', '原始输出进插件数据')
+  A.ok(shown.includes('history/x/failed-1.txt') && shown !== 'history/x/failed-1.txt', '给人看的位置说明在插件数据文件夹')
+  e.d()
+  // ② 库没就绪:不写快照、不往库里退、说出来;档案本身照存
+  const w = await bootStored({ storage: { vaultNull: true } })
+  const m2 = w.T2.newModel('等库?', 'zh')
+  await w.T2.persistModel(m2, { bump: true, snapshotText: '' })
+  await w.T2.persistModel(m2, { bump: true, snapshotText: 'v1' })
+  A.ok(!w.vw.some((p) => p.includes('/.history/')), 'vault() 为 null 时绝不退回库里写快照')
+  A.ok(w.vw.some((p) => p.endsWith('.dossier.md')), '档案本身照存')
+  A.ok(w.ns.some(([, lv]) => lv === 'warning'), '快照没存要提示')
+  w.d()
+  // ③ 复制被拒:启动就提示;之后快照不写(不当没事、也不退回库里)
+  const r = await bootStored({ vaultFiles: { [OLD]: 'x' }, storage: { rejectImport: true } })
+  A.ok(r.ns.some(([msg, lv]) => lv === 'warning' && msg.includes('Unrecognised')), '复制被拒要当场说')
+  const m3 = r.T2.newModel('拒绝?', 'zh')
+  await r.T2.persistModel(m3, { bump: true, snapshotText: '' })
+  await r.T2.persistModel(m3, { bump: true, snapshotText: 'v1' })
+  A.equal(r.st.layer.files.size, 0, '复制被拒后快照不写进插件数据')
+  A.ok(!r.vw.some((p) => p.includes('/.history/')), '也不退回库里')
+  r.d()
 }
 
 console.log(`check ok — ${reg.views.length} views / ${reg.commands.length} cmds / ${reg.settings.length} settings;判据 30 向量 + 契约往返 + XSS + 双语 + 旧宿主两版 + 统一左栏列表源 断言通过`)

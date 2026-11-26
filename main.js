@@ -8,7 +8,7 @@
  * 铁律:
  * - **判定只出自纯函数 `verdictOf`**;模型只回原始探测数据,它输出的任何 level/verdict 字段一律丢弃。
  * - 语义层只说 SUPPORTED / NOT_FOUND,**绝不输出「假」**;LIKELY_HALLUCINATED 只描述 URL 可达性。
- * - 一切读-改-写走串行写队列;写序 ①.history 快照 →②.dossier.md →③索引;bodyDigest 相同则零写入。
+ * - 一切读-改-写走串行写队列;写序 ①历史快照(插件数据 history/,旧宿主 .history/)→②.dossier.md →③索引;bodyDigest 相同则零写入。
  * - 安全:模型/用户产出文本只走 createElement + textContent(无 innerHTML 不可信面)。
  * - 双语:UI 走 ctx.getLocale/subscribeLocale 即时重渲;**档案文件按 dossier_lang 落盘,切 UI 语言不改文件**。
  * - 时间:「现在」一律 Date.now();无周期定时器(check 冻钟可测)。
@@ -115,6 +115,11 @@ const MSG = {
     canceled: '已取消',
     parse_failed: '解析失败:模型没有给出可用的档案数据。',
     raw_saved: '原始输出已另存:{path}',
+    storage_path: '插件数据文件夹的 {path}',
+    storage_wait: '笔记库还没打开好',
+    history_import_failed: '库里旧的历史快照复制不进插件数据,新的历史快照先不存(档案照常保存):{msg}',
+    history_failed: '这一版的历史快照没存上(档案本身已保存):{msg}',
+    history_skipped: '库里旧的历史快照有 {n} 个没复制进插件数据(那里已有同名、内容不同的文件,保留了现有的)。库里的原件还在。',
     research_done: '深研完成:第 {n} 版',
     research_nochange: '这一轮没有带来新内容,档案保持第 {n} 版。',
     check_done: '引注体检完成:{n} 条链接',
@@ -246,6 +251,11 @@ const MSG = {
     canceled: 'Canceled',
     parse_failed: 'Parse failed — the model returned no usable dossier data.',
     raw_saved: 'Raw output saved to {path}',
+    storage_path: '{path} in the plugin data folder',
+    storage_wait: "The vault isn't open yet",
+    history_import_failed: "The old history snapshots in the vault can't be copied into the plugin data folder, so new history snapshots aren't saved for now (dossiers still are): {msg}",
+    history_failed: "The history snapshot of this version wasn't saved (the dossier itself was): {msg}",
+    history_skipped: "{n} old history snapshots in the vault weren't copied into the plugin data folder (files with the same name and different content are already there, and were kept). The originals are still in the vault.",
     research_done: 'Research done — version {n}',
     research_nochange: 'This round added nothing new; the dossier stays at version {n}.',
     check_done: 'Citation check done — {n} links',
@@ -304,6 +314,46 @@ const wfRoot = () => {
 const dossierPath = (slug) => `${wfRoot()}/${slug}.dossier.md`
 const indexPath = () => `${wfRoot()}/.dossier-index.json`
 const historyDir = (slug) => `${wfRoot()}/.history/${slug}`
+
+// ── 插件数据文件夹(ctx.storage,宿主 2026-11-26+) ─────────────────────────────
+// 版本快照与「另存原始输出」是插件自己的东西(卸载后你不会想在库里看到),而且跟着当前库的课题走
+// → `ctx.storage.vault()` 的 history/<课题>/…。课题档案 `.dossier.md` 与几 KB 的 `.dossier-index.json` 留在库里。
+// 规矩(别改):
+//   · 没有 ctx.storage(旧宿主、网页)→ 照旧写库里的 `.history/`,行为同 1.1.x。
+//   · 有 ctx.storage 但 vault() 为 null → 这次不写快照、提示一句,**绝不退回库里写**(否则劈成两半)。
+//   · 数据层每次用时再取,不缓存(换库后旧的那层会 reject)。
+//   · 库里旧的 `.history/` 只复制(importFromVault),原件留给你自己删;复制被拒 = 不写快照并提示,不当没事。
+const HISTORY_REL = 'history'
+const HISTORY_IMPORT_ID = 'dossier-history-v1'
+const hasStorage = () => !!(ctx.storage && typeof ctx.storage.vault === 'function')
+/** 当前库的数据层,旧数据已复制完(每库一次,之后宿主回 already-done)。库没就绪抛 code 'storage-wait'。 */
+async function historyLayer() {
+  let L = null
+  try { L = ctx.storage.vault() } catch { L = null }
+  if (!L) throw Object.assign(new Error(t('storage_wait')), { code: 'storage-wait' })
+  const r = await L.importFromVault({ id: HISTORY_IMPORT_ID, from: `${wfRoot()}/.history`, to: HISTORY_REL })
+  // missing = 库里本来就没有,不记录,下次再试;skipped = 数据层里已有同名不同内容的,留着现有的
+  // 只在真正复制的那一次(status complete)提示:每个库各一次,之后宿主回 already-done
+  if (r && r.status === 'complete' && Array.isArray(r.skipped) && r.skipped.length) {
+    say(t('history_skipped', { n: r.skipped.length }), { level: 'warning' })
+  }
+  return L
+}
+/** 写一份历史文件(`<课题>/<文件名>`)。返回给人看的位置。 */
+async function writeHistory(rel, text) {
+  if (!hasStorage()) {
+    const path = `${wfRoot()}/.history/${rel}`
+    await ctx.app.writeFile(path, text)
+    return path
+  }
+  const L = await historyLayer()
+  // 同名文件已在(复制时保留下来的那份,内容不同)→ 不覆盖,另起一个名字;内容相同就复用
+  let target = `${HISTORY_REL}/${rel}`
+  const cur = await L.readText(target)
+  if (cur != null && cur !== text) target = target.replace(/(\.[^./]+(?:\.md)?)$/, `-${Date.now()}$1`)
+  if (cur !== text) await L.write(target, text)
+  return t('storage_path', { path: target })
+}
 const reportDir = () => `${wfRoot()}/体检`
 const numSetting = (key, dflt, lo, hi) => {
   const n = parseInt(getLS(key, String(dflt)), 10)
@@ -1284,13 +1334,16 @@ function newModel(question, lang) {
     summary: '', claims: [], sources: [], gaps: [], log: [], parseOk: true,
   }
 }
-/** 写序:① .history 快照(旧版) → ② .dossier.md → ③ 索引。②③ 之间崩 = 索引落后一版,下次打开自愈。 */
+/** 写序:① 历史快照(旧版,见 writeHistory) → ② .dossier.md → ③ 索引。②③ 之间崩 = 索引落后一版,下次打开自愈。 */
 async function persistModel(model, opts) {
   const o = opts || {}
   const slug = model.fm.slug
   const path = o.path || dossierPath(slug)
   if (o.snapshotText && model.fm.version > 0) {
-    try { await ctx.app.writeFile(`${historyDir(slug)}/${padVersion(model.fm.version)}.dossier.md`, o.snapshotText) } catch { /* 快照失败不阻断正文落盘 */ }
+    // 快照失败不阻断正文落盘;但新宿主上要说出来(数据层读不出 / 复制被拒 / 库没就绪),不能悄悄没了
+    try { await writeHistory(`${slug}/${padVersion(model.fm.version)}.dossier.md`, o.snapshotText) } catch (e) {
+      if (hasStorage()) say(t('history_failed', { msg: String((e && e.message) || e) }), { level: 'warning' })
+    }
   }
   if (o.bump) model.fm.version = (model.fm.version | 0) + 1
   model.fm.updated = new Date(Date.now()).toISOString()
@@ -1872,8 +1925,11 @@ async function saveProbeReport() {
 async function saveRawOutput() {
   if (!run.rawOutput) return
   try {
-    const path = `${historyDir(run.slug || 'unknown')}/failed-${Date.now()}.txt`
-    await enqueueWrite(() => ctx.app.writeFile(path, run.rawOutput))
+    // 点「另存」那一刻就定下内容和文件名(排队期间工作文件夹或输出变了也不跑偏)
+    const raw = run.rawOutput
+    const rel = `${run.slug || 'unknown'}/failed-${Date.now()}.txt`
+    const legacyRoot = wfRoot()
+    const path = await enqueueWrite(() => (hasStorage() ? writeHistory(rel, raw) : ctx.app.writeFile(`${legacyRoot}/.history/${rel}`, raw).then(() => `${legacyRoot}/.history/${rel}`)))
     run.rawPath = path
     emit()
     say(t('raw_saved', { path }), { level: 'success' })
@@ -2423,6 +2479,13 @@ ctx.registerSetting?.({ key: 'rounds', label: t('set_rounds'), type: 'number', d
 ctx.registerSetting?.({ key: 'autoCheck', label: t('set_autocheck'), type: 'boolean', default: true, description: t('set_autocheck_desc') })
 ctx.registerSetting?.({ key: 'maxSources', label: t('set_max'), type: 'number', default: 12, min: 3, max: 40, description: t('set_max_desc') })
 
+// 启动时就把库里旧的 `.history/` 复制过来;库还在恢复(storage-wait)就等下次写快照时再复制
+if (hasStorage()) {
+  historyLayer().catch((e) => {
+    if (!(e && e.code === 'storage-wait')) say(t('history_import_failed', { msg: String((e && e.message) || e) }), { level: 'warning' })
+  })
+}
+
 // ── 贡献点(desk 必须第一个 registerView) ───────────────────────────────────
 ctx.registerView?.({ id: 'desk', title: t('view_desk'), mount: mountDesk, singleton: true, workspaceSource: 'dossier-list' })
 ctx.registerView?.({ id: 'run', title: t('view_run'), mount: mountRun, singleton: true, workspaceSource: 'dossier-list' })
@@ -2566,6 +2629,7 @@ if (globalThis.__DOSSIER_TEST__) {
   Object.assign(globalThis.__DOSSIER_TEST__, {
     verdictOf, normalizeUrl, parseProbeJson, parseDossier, serializeDossier, sectionKeyOf,
     reconcileClaimIds, mergeSources, diffVersions, bodyDigest, healthSummary, slugifyTopic,
+    writeHistory, historyLayer, saveRawOutput,
     uniqueSlug, parseAgentOutput, extractUrls, renderMarkdown, inline, safeHref, fmtDate,
     stageOf, STEPS, MSG, t,
     // 非 SPEC 必测但 check 要用到的内部件
